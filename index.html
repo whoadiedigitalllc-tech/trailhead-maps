@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<title>Trailhead</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map" role="application" aria-label="Map"></div>
+
+<div id="top">
+  <div id="hud" hidden aria-live="polite"></div>
+  <div id="coords" class="pill" aria-label="Map centre coordinates"></div>
+  <div id="net" class="pill warn" hidden>Offline</div>
+</div>
+
+<div id="crosshair" hidden aria-hidden="true">+</div>
+
+<div id="side">
+  <button class="mapbtn" id="btn-locate" aria-label="My location">◎</button>
+  <button class="mapbtn" id="btn-north" aria-label="Reset north">N</button>
+</div>
+
+<div id="draw" hidden>
+  <span id="draw-stat" aria-live="polite"></span>
+  <button id="draw-undo">Undo</button>
+  <button id="draw-cancel">Cancel</button>
+  <button id="draw-done" class="primary">Save</button>
+</div>
+
+<nav id="bar">
+  <button id="btn-layers"><span aria-hidden="true">▦</span>Layers</button>
+  <button id="btn-content"><span aria-hidden="true">☰</span>Saved</button>
+  <button id="btn-add" class="primary"><span aria-hidden="true">＋</span>Add</button>
+  <button id="btn-track"><span aria-hidden="true">●</span>Track</button>
+  <button id="btn-offline"><span aria-hidden="true">⬇</span>Offline</button>
+</nav>
+
+<section id="sheet" hidden role="dialog" aria-modal="false" aria-labelledby="sheet-title">
+  <header><h2 id="sheet-title"></h2><button id="sheet-close" aria-label="Close">✕</button></header>
+  <div id="sheet-body"></div>
+</section>
+
+<input type="file" id="gpx-file" hidden>
+<script src="vendor/maplibre-gl.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
