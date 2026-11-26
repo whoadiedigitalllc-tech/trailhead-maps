@@ -1,7 +1,7 @@
 // Offline: app shell + land data cached on install; basemap tiles served from the 'tiles' cache filled by Offline maps.
-const SHELL = 'shell-v1';
+const SHELL = 'shell-v2';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'geo.js', 'manifest.webmanifest', 'icon-180.png', 'icon-512.png',
-               'vendor/maplibre-gl.js', 'vendor/maplibre-gl.css', 'data/land-LA.geojson'];
+               'vendor/maplibre-gl.js', 'vendor/maplibre-gl.css', 'data/land-LA.geojson', 'data/parcels-LA.geojson'];
 
 self.addEventListener('install', e => e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(

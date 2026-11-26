@@ -34,6 +34,7 @@ const MGR = {
   PVT: ['Private (conservation)', '#9aa0a6'], UNK: ['Unknown', '#9aa0a6'], UNKL: ['Unknown', '#9aa0a6'],
 };
 const ACCESS = { OA: 'Open access', RA: 'Restricted access (permit or rules)', XA: 'Closed to public', UK: 'Access unknown' };
+const PARISHES = ['Ascension']; // keep in step with the parishes passed to tools/fetch-parcels.mjs
 const COLORS = ['#ff3b30', '#ff9500', '#ffcc00', '#34c759', '#007aff', '#af52de', '#ffffff', '#000000'];
 const ICONS = ['📍', '🦌', '🪜', '📷', '🚗', '⛺', '🎯', '💧', '🐾', '🌳', '⚠️', '⭐', '🏠', '🦆', '🐗', '🚪'];
 const KIND_ICON = { waypoint: '📍', line: '〰️', area: '⬠', track: '👣' };
@@ -58,12 +59,18 @@ const map = new maplibregl.Map({
       ...Object.fromEntries(Object.keys(BASEMAPS).map(b => [b, { type: 'raster', tileSize: 256, maxzoom: 16,
         tiles: [`${USGS}/${BASEMAPS[b]}/MapServer/tile/{z}/{y}/{x}`], attribution: 'USGS The National Map · PAD-US 4.1' }])),
       land: { type: 'geojson', data: 'data/land-LA.geojson' },
+      // shortcut: one GeoJSON for all parishes (~18 MB per parish); switch to vector tiles (tippecanoe/PMTiles) if load gets slow
+      parcels: { type: 'geojson', data: 'data/parcels-LA.geojson' },
       markup: { type: 'geojson', data: fc([]) },
       draft: { type: 'geojson', data: fc([]) },
     },
     layers: [
       { id: 'bg', type: 'background', paint: { 'background-color': '#dde3d5' } },
       ...Object.keys(BASEMAPS).map(b => ({ id: b, type: 'raster', source: b, layout: { visibility: b === base ? 'visible' : 'none' } })),
+      // invisible fill so a tap anywhere inside a parcel finds it; lines only once zoomed in
+      { id: 'parcel-fill', type: 'fill', source: 'parcels', minzoom: 13, paint: { 'fill-color': '#000', 'fill-opacity': 0 } },
+      { id: 'parcel-line', type: 'line', source: 'parcels', minzoom: 13, paint: {
+          'line-color': '#ff6b3d', 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.6, 17, 1.8] } },
       { id: 'land-fill', type: 'fill', source: 'land', paint: {
           'fill-color': ['match', ['get', 'mgr'], ...Object.entries(MGR).flatMap(([k, [, c]]) => [k, c]), '#9aa0a6'],
           'fill-opacity': ['case', ['==', ['get', 'access'], 'XA'], 0.12, 0.35] } },
@@ -71,6 +78,7 @@ const map = new maplibregl.Map({
           'line-color': ['match', ['get', 'mgr'], ...Object.entries(MGR).flatMap(([k, [, c]]) => [k, c]), '#9aa0a6'],
           'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 14, 2] } },
       { id: 'land-sel', type: 'line', source: 'land', filter: ['==', ['id'], -1], paint: { 'line-color': '#ffd60a', 'line-width': 3 } },
+      { id: 'parcel-sel', type: 'line', source: 'parcels', filter: ['==', ['id'], -1], paint: { 'line-color': '#ffd60a', 'line-width': 3 } },
       { id: 'markup-fill', type: 'fill', source: 'markup', filter: ['==', ['get', 'kind'], 'area'], paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.25 } },
       { id: 'markup-line', type: 'line', source: 'markup', layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['==', ['get', 'kind'], 'track'], 4, 3] } },
@@ -126,7 +134,7 @@ function sheet(title, html) {
   $('#sheet').scrollTop = 0;
   return $('#sheet-body');
 }
-const closeSheet = () => { $('#sheet').hidden = true; map.setFilter('land-sel', ['==', ['id'], -1]); };
+const closeSheet = () => { $('#sheet').hidden = true; ['land-sel', 'parcel-sel'].forEach(l => map.setFilter(l, ['==', ['id'], -1])); };
 $('#sheet-close').onclick = closeSheet;
 function toast(msg) { sheet('Heads up', `<p>${esc(msg)}</p>`); }
 
@@ -138,14 +146,20 @@ map.on('click', async e => {
   // smallest unit on top (a WMA inside a national forest should win)
   const f = hits.sort((a, b) => (a.properties.acres || 0) - (b.properties.acres || 0))[0];
   map.setFilter('land-sel', f ? ['==', ['id'], f.id] : ['==', ['id'], -1]);
-  const p = f?.properties;
-  const body = sheet(p ? p.name : 'Private or unmapped land', `
+  // public land wins; otherwise show the private parcel's owner
+  const pc = f ? null : map.queryRenderedFeatures(e.point, { layers: ['parcel-fill'] })[0];
+  map.setFilter('parcel-sel', ['==', ['id'], pc ? pc.id : -1]);
+  const p = f?.properties, q = pc?.properties;
+  const body = sheet(p ? p.name : q ? (q.owner || 'Owner not published') : 'Private or unmapped land', `
     ${p ? `<p><span class="legend" style="background:${MGR[p.mgr]?.[1] || '#9aa0a6'}"></span>${esc(MGR[p.mgr]?.[0] || p.mgr)}</p>
       <p>${esc(ACCESS[p.access] || ACCESS.UK)}${p.acres ? ` · ${p.acres.toLocaleString()} ac` : ''}</p>`
+      : q ? `<p>Private parcel${q.acres ? ` · ${q.acres.toLocaleString()} ac` : ''}</p>
+      <p>Parcel ID ${esc(q.pid || 'not listed')} · ${esc(q.parish)} Parish</p>
+      <p>Get the owner's permission before you hunt.</p>`
       : `<p>No public land here in PAD-US. Treat it as private: get permission before you hunt.</p>`}
     <p class="muted">${fmt.coord(lngLat)}</p>
     <p id="wx" class="muted"></p>
-    <p class="muted">Source: USGS PAD-US 4.1. Not a legal boundary survey; check LDWF regs and posted signs.</p>
+    <p class="muted">Source: ${q ? `${esc(q.parish)} Parish Assessor GIS, fetched ${esc(q.asof)}` : 'USGS PAD-US 4.1'}. Not a legal boundary survey; check LDWF regs and posted signs.</p>
     <div class="actions"><button class="primary" id="here-wpt">Add waypoint here</button></div>`);
   body.querySelector('#here-wpt').onclick = () => newWaypoint(lngLat);
   weather(lngLat).then(t => { const w = body.querySelector('#wx'); if (w) w.textContent = t; });
@@ -341,6 +355,7 @@ function recoverTrack() {
 // ---------- layers ----------
 $('#btn-layers').onclick = () => {
   const on = map.getLayoutProperty('land-fill', 'visibility') !== 'none';
+  const pOn = map.getLayoutProperty('parcel-line', 'visibility') !== 'none';
   const b = sheet('Layers', `
     <div class="seg" role="group" aria-label="Basemap">${Object.keys(BASEMAPS).map(k =>
       `<button data-base="${k}" aria-pressed="${k === base}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div>
@@ -348,7 +363,10 @@ $('#btn-layers').onclick = () => {
     <p class="muted">${[...new Set(Object.values(MGR).map(v => v[1]))].map(c =>
       `<span class="legend" style="background:${c}"></span>${{ '#e8c13a': 'BLM', '#3f9b4a': 'Forest Service', '#8a63c2': 'Park Service',
         '#d9822b': 'Fish & Wildlife', '#3d84d6': 'State / WMA', '#b08a5a': 'Tribal', '#7fb5a8': 'Other federal', '#9aa0a6': 'Local / other' }[c]}`).join('<br>')}</p>
-    <p class="muted">Faded fill = closed to public. Private parcels aren't available yet (Louisiana has no free statewide parcel data).</p>`);
+    <p class="muted">Faded fill = closed to public.</p>
+    <label class="row"><span class="grow"><span class="legend" style="background:#ff6b3d"></span>Property lines + owners</span><input type="checkbox" id="l-parcels" ${pOn ? 'checked' : ''}></label>
+    <p class="muted">Zoom in to see them. Parishes loaded: ${PARISHES.join(', ')}.</p>`);
+  b.querySelector('#l-parcels').onchange = e => ['parcel-fill', 'parcel-line'].forEach(l => map.setLayoutProperty(l, 'visibility', e.target.checked ? 'visible' : 'none'));
   b.querySelectorAll('[data-base]').forEach(x => x.onclick = () => {
     base = x.dataset.base; localStorage.setItem('base', base);
     Object.keys(BASEMAPS).forEach(k => map.setLayoutProperty(k, 'visibility', k === base ? 'visible' : 'none'));
