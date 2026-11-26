@@ -34,7 +34,6 @@ const MGR = {
   PVT: ['Private (conservation)', '#9aa0a6'], UNK: ['Unknown', '#9aa0a6'], UNKL: ['Unknown', '#9aa0a6'],
 };
 const ACCESS = { OA: 'Open access', RA: 'Restricted access (permit or rules)', XA: 'Closed to public', UK: 'Access unknown' };
-const PARISHES = ['Ascension']; // keep in step with the parishes passed to tools/fetch-parcels.mjs
 const COLORS = ['#ff3b30', '#ff9500', '#ffcc00', '#34c759', '#007aff', '#af52de', '#ffffff', '#000000'];
 const ICONS = ['📍', '🦌', '🪜', '📷', '🚗', '⛺', '🎯', '💧', '🐾', '🌳', '⚠️', '⭐', '🏠', '🦆', '🐗', '🚪'];
 const KIND_ICON = { waypoint: '📍', line: '〰️', area: '⬠', track: '👣' };
@@ -59,8 +58,8 @@ const map = new maplibregl.Map({
       ...Object.fromEntries(Object.keys(BASEMAPS).map(b => [b, { type: 'raster', tileSize: 256, maxzoom: 16,
         tiles: [`${USGS}/${BASEMAPS[b]}/MapServer/tile/{z}/{y}/{x}`], attribution: 'USGS The National Map · PAD-US 4.1' }])),
       land: { type: 'geojson', data: 'data/land-LA.geojson' },
-      // shortcut: one GeoJSON for all parishes (~18 MB per parish); switch to vector tiles (tippecanoe/PMTiles) if load gets slow
-      parcels: { type: 'geojson', data: 'data/parcels-LA.geojson' },
+      // filled per parish as you zoom in over it (see loadParcels)
+      parcels: { type: 'geojson', data: fc([]) },
       markup: { type: 'geojson', data: fc([]) },
       draft: { type: 'geojson', data: fc([]) },
     },
@@ -96,7 +95,23 @@ geo.on('error', () => toast('Location unavailable. Check Settings › Privacy �
 const showCoords = () => { const c = map.getCenter(); $('#coords').textContent = fmt.coord([c.lng, c.lat]); };
 map.on('move', showCoords);
 map.on('moveend', () => localStorage.setItem('view', JSON.stringify({ c: map.getCenter().toArray(), z: map.getZoom() })));
-map.on('load', async () => { showCoords(); items = await db.all('items'); render(); recoverTrack(); });
+map.on('load', async () => { showCoords(); loadParcels(); items = await db.all('items'); render(); recoverTrack(); });
+
+// ---------- parcels: one file per parish (12-18 MB each), fetched only when you zoom in over that parish ----------
+// shortcut: whole-parish GeoJSON in memory; switch to vector tiles (tippecanoe/PMTiles) if a phone struggles with 2+ parishes loaded
+const parcelIndex = fetch('data/parcels/index.json').then(r => r.json()).catch(() => ({}));
+const parcelFeats = [], parcelLoads = new Map(); // parish -> promise
+async function loadParcels() {
+  if (map.getZoom() < 12) return;
+  const b = map.getBounds(), idx = await parcelIndex;
+  for (const [name, { bbox: [w, s, e, n] }] of Object.entries(idx)) {
+    if (parcelLoads.has(name) || e < b.getWest() || w > b.getEast() || n < b.getSouth() || s > b.getNorth()) continue;
+    parcelLoads.set(name, fetch(`data/parcels/${name}.geojson`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(j => { parcelFeats.push(...j.features); map.getSource('parcels').setData(fc(parcelFeats)); })
+      .catch(() => parcelLoads.delete(name))); // offline or failed: try again on the next move
+  }
+}
+map.on('moveend', loadParcels);
 
 // ---------- render saved content ----------
 function render() {
@@ -149,17 +164,18 @@ map.on('click', async e => {
   // public land wins; otherwise show the private parcel's owner
   const pc = f ? null : map.queryRenderedFeatures(e.point, { layers: ['parcel-fill'] })[0];
   map.setFilter('parcel-sel', ['==', ['id'], pc ? pc.id : -1]);
-  const p = f?.properties, q = pc?.properties;
-  const body = sheet(p ? p.name : q ? (q.owner || 'Owner not published') : 'Private or unmapped land', `
+  const p = f?.properties, q = pc?.properties, src = q && (await parcelIndex)[q.parish];
+  const body = sheet(p ? p.name : q ? (q.owner || `${q.parish} Parish parcel`) : 'Private or unmapped land', `
     ${p ? `<p><span class="legend" style="background:${MGR[p.mgr]?.[1] || '#9aa0a6'}"></span>${esc(MGR[p.mgr]?.[0] || p.mgr)}</p>
       <p>${esc(ACCESS[p.access] || ACCESS.UK)}${p.acres ? ` · ${p.acres.toLocaleString()} ac` : ''}</p>`
       : q ? `<p>Private parcel${q.acres ? ` · ${q.acres.toLocaleString()} ac` : ''}</p>
       <p>Parcel ID ${esc(q.pid || 'not listed')} · ${esc(q.parish)} Parish</p>
+      ${q.owner ? '' : `<p>Owner not shown. Look up the current owner with the ${esc(q.parish)} Parish assessor using the parcel ID.</p>`}
       <p>Get the owner's permission before you hunt.</p>`
       : `<p>No public land here in PAD-US. Treat it as private: get permission before you hunt.</p>`}
     <p class="muted">${fmt.coord(lngLat)}</p>
     <p id="wx" class="muted"></p>
-    <p class="muted">Source: ${q ? `${esc(q.parish)} Parish Assessor GIS, fetched ${esc(q.asof)}` : 'USGS PAD-US 4.1'}. Not a legal boundary survey; check LDWF regs and posted signs.</p>
+    <p class="muted">Source: ${q ? `${esc(src?.source || `${q.parish} Parish`)}, as of ${esc(src?.asof || 'unknown')}` : 'USGS PAD-US 4.1'}. Not a legal boundary survey; check LDWF regs and posted signs.</p>
     <div class="actions"><button class="primary" id="here-wpt">Add waypoint here</button></div>`);
   body.querySelector('#here-wpt').onclick = () => newWaypoint(lngLat);
   weather(lngLat).then(t => { const w = body.querySelector('#wx'); if (w) w.textContent = t; });
@@ -353,7 +369,8 @@ function recoverTrack() {
 }
 
 // ---------- layers ----------
-$('#btn-layers').onclick = () => {
+$('#btn-layers').onclick = async () => {
+  const parishes = Object.entries(await parcelIndex).map(([n, v]) => v.owners ? n : `${n} (lines only)`);
   const on = map.getLayoutProperty('land-fill', 'visibility') !== 'none';
   const pOn = map.getLayoutProperty('parcel-line', 'visibility') !== 'none';
   const b = sheet('Layers', `
@@ -365,7 +382,7 @@ $('#btn-layers').onclick = () => {
         '#d9822b': 'Fish & Wildlife', '#3d84d6': 'State / WMA', '#b08a5a': 'Tribal', '#7fb5a8': 'Other federal', '#9aa0a6': 'Local / other' }[c]}`).join('<br>')}</p>
     <p class="muted">Faded fill = closed to public.</p>
     <label class="row"><span class="grow"><span class="legend" style="background:#ff6b3d"></span>Property lines + owners</span><input type="checkbox" id="l-parcels" ${pOn ? 'checked' : ''}></label>
-    <p class="muted">Zoom in to see them. Parishes loaded: ${PARISHES.join(', ')}.</p>`);
+    <p class="muted">Zoom in to see them. Parishes: ${esc(parishes.join(', ') || 'none')}.</p>`);
   b.querySelector('#l-parcels').onchange = e => ['parcel-fill', 'parcel-line'].forEach(l => map.setLayoutProperty(l, 'visibility', e.target.checked ? 'visible' : 'none'));
   b.querySelectorAll('[data-base]').forEach(x => x.onclick = () => {
     base = x.dataset.base; localStorage.setItem('base', base);

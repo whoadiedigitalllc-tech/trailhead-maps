@@ -1,0 +1,38 @@
+{
+ "Ascension": {
+  "bbox": [
+   -91.1067,
+   30.0624,
+   -90.6324,
+   30.3469
+  ],
+  "source": "Ascension Parish Assessor GIS",
+  "asof": "2026-11-25",
+  "count": 59948,
+  "owners": true
+ },
+ "DeSoto": {
+  "bbox": [
+   -94.0434,
+   31.844,
+   -93.3531,
+   32.3456
+  ],
+  "source": "DeSoto Parish Assessor GIS",
+  "asof": "2026-11-25",
+  "count": 41992,
+  "owners": true
+ },
+ "Sabine": {
+  "bbox": [
+   -93.9623,
+   31.1782,
+   -93.236,
+   32.0704
+  ],
+  "source": "Sabine Parish parcels, 2009 copy (unofficial)",
+  "asof": "2009",
+  "count": 35504,
+  "owners": false
+ }
+}
